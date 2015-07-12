@@ -234,6 +234,7 @@ redis_sock_read_scan_reply(INTERNAL_FUNCTION_PARAMETERS, RedisSock *redis_sock,
             return redis_sock_read_multibulk_reply(
                 INTERNAL_FUNCTION_PARAM_PASSTHRU, redis_sock, NULL, NULL);
         case TYPE_ZSCAN:
+        case TYPE_XSCAN:
             return redis_mbulk_reply_zipped_keys_dbl(INTERNAL_FUNCTION_PARAM_PASSTHRU,
                 redis_sock, NULL, NULL);
         case TYPE_HSCAN:
@@ -898,6 +899,8 @@ PHP_REDIS_API void redis_type_response(INTERNAL_FUNCTION_PARAMETERS, RedisSock *
         l = REDIS_ZSET;
     } else if (strncmp(response, "+hash", 5) == 0){
         l = REDIS_HASH;
+    } else if (strncmp(response, "+xset", 5) == 0){
+        l = REDIS_XSET;
     } else {
         l = REDIS_NOT_FOUND;
     }

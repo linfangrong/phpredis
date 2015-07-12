@@ -223,6 +223,30 @@ PHP_METHOD(Redis, getPersistentID);
 PHP_METHOD(Redis, getAuth);
 PHP_METHOD(Redis, getMode);
 
+/* Finite sorted sets */
+PHP_METHOD(Redis, xAdd);
+PHP_METHOD(Redis, xIncrBy);
+PHP_METHOD(Redis, xRange);
+PHP_METHOD(Redis, xRevRange);
+PHP_METHOD(Redis, xScore);
+PHP_METHOD(Redis, xDelete);
+PHP_METHOD(Redis, xCard);
+PHP_METHOD(Redis, xSetOptions);
+PHP_METHOD(Redis, xGetFinity);
+PHP_METHOD(Redis, xGetPruning);
+PHP_METHOD(Redis, xRangeByScore);
+PHP_METHOD(Redis, xRevRangeByScore);
+PHP_METHOD(Redis, xRangeByLex);
+PHP_METHOD(Redis, xRevRangeByLex);
+PHP_METHOD(Redis, xRank);
+PHP_METHOD(Redis, xRevRank);
+PHP_METHOD(Redis, xCount);
+PHP_METHOD(Redis, xLexCount);
+PHP_METHOD(Redis, xRemRangeByScore);
+PHP_METHOD(Redis, xRemRangeByRank);
+PHP_METHOD(Redis, xRemRangeByLex);
+PHP_METHOD(Redis, xScan);
+
 #ifdef ZTS
 #include "TSRM.h"
 #endif

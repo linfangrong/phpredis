@@ -132,6 +132,13 @@ void ra_init_function_table(RedisArray *ra) {
 	add_assoc_bool(ra->z_pure_cmds, "HGET", 1);
 	add_assoc_bool(ra->z_pure_cmds, "OBJECT", 1);
 	add_assoc_bool(ra->z_pure_cmds, "SMEMBERS", 1);
+	add_assoc_bool(ra->z_pure_cmds, "XCARD", 1);
+	add_assoc_bool(ra->z_pure_cmds, "XCOUNT", 1);
+	add_assoc_bool(ra->z_pure_cmds, "XRANGE", 1);
+	add_assoc_bool(ra->z_pure_cmds, "XREVRANGE", 1);
+	add_assoc_bool(ra->z_pure_cmds, "XSCORE", 1);
+	add_assoc_bool(ra->z_pure_cmds, "XGETFINITY", 1);
+	add_assoc_bool(ra->z_pure_cmds, "XGETPRUNING", 1);
 }
 
 static int
@@ -1144,6 +1151,126 @@ ra_move_list(const char *key, int key_len, zval *z_from, zval *z_to, long ttl TS
 	return ra_move_collection(key, key_len, z_from, z_to, 3, cmd_list, 1, cmd_add, ttl TSRMLS_CC);
 }
 
+static zend_bool
+ra_move_xset(const char *key, int key_len, zval *z_from, zval *z_to, long ttl TSRMLS_DC) {
+
+	zval z_fun_xrange, z_fun_xadd, z_ret, z_ret_dest, *z_args[4], **z_xadd_args, **z_score_pp;
+	int count;
+	HashTable *h_zset_vals;
+	char *val;
+	unsigned int val_len;
+	int i;
+	unsigned long idx;
+	zval z_fun_xgetfinity, z_fun_xgetpruning, z_ret_xgetfinity, z_ret_xgetpruning, *z_get_args[1];
+
+	/* run XRANGE key 0 -1 WITHSCORES on source */
+	ZVAL_STRINGL(&z_fun_xrange, "XRANGE", 6, 0);
+	for(i = 0; i < 4; ++i) {
+		MAKE_STD_ZVAL(z_args[i]);
+	}
+	ZVAL_STRINGL(z_args[0], key, key_len, 0);
+	ZVAL_STRINGL(z_args[1], "0", 1, 0);
+	ZVAL_STRINGL(z_args[2], "-1", 2, 0);
+	ZVAL_BOOL(z_args[3], 1);
+	call_user_function(&redis_ce->function_table, &z_from, &z_fun_xrange, &z_ret, 4, z_args TSRMLS_CC);
+
+	/* cleanup zrange args */
+	for(i = 0; i < 4; ++i) {
+		efree(z_args[i]); /* FIXME */
+	}
+
+	if(Z_TYPE(z_ret) != IS_ARRAY) { /* key not found or replaced */
+		/* TODO: report? */
+		return 0;
+	}
+
+	MAKE_STD_ZVAL(z_get_args[0]);
+	ZVAL_STRINGL(z_get_args[0], key, key_len, 0);
+	/* run XGETFINITY key */
+	ZVAL_STRINGL(&z_fun_xgetfinity, "XGETFINITY", 10, 0);
+	call_user_function(&redis_ce->function_table, &z_from, &z_fun_xgetfinity, &z_ret_xgetfinity, 1, z_get_args TSRMLS_CC);
+	if (Z_TYPE(z_ret_xgetfinity) != IS_LONG) { /* key not fount or replaced */
+		/* TODO: report? */
+		efree(z_get_args[0]);
+		return 0;
+	}
+
+	/* run XGETPRUNING key */
+	ZVAL_STRINGL(&z_fun_xgetpruning, "XGETPRUNING", 11, 0);
+	call_user_function(&redis_ce->function_table, &z_from, &z_fun_xgetpruning, &z_ret_xgetpruning, 1, z_get_args TSRMLS_CC);
+	if (Z_TYPE(z_ret_xgetpruning) != IS_STRING) { /* key not fount or replaced */
+		/* TODO: report? */
+		efree(z_get_args[0]);
+		return 0;
+	}
+	efree(z_get_args[0]);
+
+	/* we now have an array of value → score pairs in z_ret. */
+	h_zset_vals = Z_ARRVAL(z_ret);
+
+	/* allocate argument array for ZADD */
+	count = zend_hash_num_elements(h_zset_vals);
+	z_xadd_args = emalloc((5 + 2*count) * sizeof(zval*));
+
+	for(i = 5, zend_hash_internal_pointer_reset(h_zset_vals);
+			zend_hash_has_more_elements(h_zset_vals) == SUCCESS;
+			zend_hash_move_forward(h_zset_vals)) {
+
+		if(zend_hash_get_current_data(h_zset_vals, (void**)&z_score_pp) == FAILURE) {
+			continue;
+		}
+
+		/* add score */
+		convert_to_double(*z_score_pp);
+		MAKE_STD_ZVAL(z_xadd_args[i]);
+		ZVAL_DOUBLE(z_xadd_args[i], Z_DVAL_PP(z_score_pp));
+
+		/* add value */
+		MAKE_STD_ZVAL(z_xadd_args[i+1]);
+		switch (zend_hash_get_current_key_ex(h_zset_vals, &val, &val_len, &idx, 0, NULL)) {
+			case HASH_KEY_IS_STRING:
+				ZVAL_STRINGL(z_xadd_args[i+1], val, (int)val_len-1, 0); /* we have to remove 1 because it is an array key. */
+				break;
+			case HASH_KEY_IS_LONG:
+				ZVAL_LONG(z_xadd_args[i+1], (long)idx);
+				break;
+			default:
+				return -1; /* Todo: log error */
+				break;
+		}
+		i += 2;
+	}
+
+	/* run XADD on target */
+	for (i = 0; i < 5; ++i) {
+		MAKE_STD_ZVAL(z_xadd_args[i]);
+	}
+	ZVAL_STRINGL(&z_fun_xadd, "XADD", 4, 0);
+	ZVAL_STRINGL(z_xadd_args[0], key, key_len, 0);
+	ZVAL_STRINGL(z_xadd_args[1], "FINITY", 6, 0);
+	ZVAL_LONG(z_xadd_args[2], Z_LVAL(z_ret_xgetfinity));
+	ZVAL_STRINGL(z_xadd_args[3], "PRUNING", 7, 0);
+	ZVAL_STRINGL(z_xadd_args[4], Z_STRVAL(z_ret_xgetpruning), Z_STRLEN(z_ret_xgetpruning), 1);
+	call_user_function(&redis_ce->function_table, &z_to, &z_fun_xadd, &z_ret_dest, 5 + 2 * count, z_xadd_args TSRMLS_CC);
+
+	/* Expire if needed */
+	ra_expire_key(key, key_len, z_to, ttl TSRMLS_CC);
+
+	/* cleanup */
+	for(i = 0; i < 5 + 2 * count; ++i) {
+		efree(z_xadd_args[i]);
+	}
+
+	zval_dtor(&z_ret);
+	zval_dtor(&z_ret_xgetfinity);
+	zval_dtor(&z_ret_xgetpruning);
+
+	/* Free the array itself */
+	efree(z_xadd_args);
+
+	return 1;
+}
+
 void
 ra_move_key(const char *key, int key_len, zval *z_from, zval *z_to TSRMLS_DC) {
 
@@ -1173,6 +1300,10 @@ ra_move_key(const char *key, int key_len, zval *z_from, zval *z_to TSRMLS_DC) {
 
 			case REDIS_HASH:
 				success = ra_move_hash(key, key_len, z_from, z_to, ttl TSRMLS_CC);
+				break;
+
+			case REDIS_XSET:
+				success = ra_move_xset(key, key_len, z_from, z_to, ttl TSRMLS_CC);
 				break;
 
 			default:

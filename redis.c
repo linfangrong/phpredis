@@ -340,6 +340,34 @@ static zend_function_entry redis_functions[] = {
 
      PHP_MALIAS(Redis, evaluate, eval, NULL, ZEND_ACC_PUBLIC)
      PHP_MALIAS(Redis, evaluateSha, evalsha, NULL, ZEND_ACC_PUBLIC)
+
+     /* finite sorted sets */
+     PHP_ME(Redis, xAdd, NULL, ZEND_ACC_PUBLIC)
+     PHP_ME(Redis, xIncrBy, NULL, ZEND_ACC_PUBLIC)
+     PHP_ME(Redis, xRange, NULL, ZEND_ACC_PUBLIC)
+     PHP_ME(Redis, xRevRange, NULL, ZEND_ACC_PUBLIC)
+     PHP_ME(Redis, xScore, NULL, ZEND_ACC_PUBLIC)
+     PHP_ME(Redis, xDelete, NULL, ZEND_ACC_PUBLIC)
+     PHP_MALIAS(Redis, xRemove, xDelete, NULL, ZEND_ACC_PUBLIC)
+     PHP_MALIAS(Redis, xRem, xDelete, NULL, ZEND_ACC_PUBLIC)
+     PHP_ME(Redis, xCard, NULL, ZEND_ACC_PUBLIC)
+     PHP_MALIAS(Redis, xSize, xCard, NULL, ZEND_ACC_PUBLIC)
+     PHP_ME(Redis, xSetOptions, NULL, ZEND_ACC_PUBLIC)
+     PHP_ME(Redis, xGetFinity, NULL, ZEND_ACC_PUBLIC)
+     PHP_ME(Redis, xGetPruning, NULL, ZEND_ACC_PUBLIC)
+     PHP_ME(Redis, xRangeByScore, NULL, ZEND_ACC_PUBLIC)
+     PHP_ME(Redis, xRevRangeByScore, NULL, ZEND_ACC_PUBLIC)
+     PHP_ME(Redis, xRangeByLex, NULL, ZEND_ACC_PUBLIC)
+     PHP_ME(Redis, xRevRangeByLex, NULL, ZEND_ACC_PUBLIC)
+     PHP_ME(Redis, xRank, NULL, ZEND_ACC_PUBLIC)
+     PHP_ME(Redis, xRevRank, NULL, ZEND_ACC_PUBLIC)
+     PHP_ME(Redis, xCount, NULL, ZEND_ACC_PUBLIC)
+     PHP_ME(Redis, xLexCount, NULL, ZEND_ACC_PUBLIC)
+     PHP_ME(Redis, xRemRangeByScore, NULL, ZEND_ACC_PUBLIC)
+     PHP_ME(Redis, xRemRangeByRank, NULL, ZEND_ACC_PUBLIC)
+     PHP_ME(Redis, xRemRangeByLex, NULL, ZEND_ACC_PUBLIC)
+     PHP_ME(Redis, xScan, NULL, ZEND_ACC_PUBLIC)
+
      {NULL, NULL, NULL}
 };
 
@@ -502,6 +530,7 @@ static void add_class_constants(zend_class_entry *ce, int is_cluster TSRMLS_DC) 
     zend_declare_class_constant_long(ce, ZEND_STRL("REDIS_LIST"), REDIS_LIST TSRMLS_CC);
     zend_declare_class_constant_long(ce, ZEND_STRL("REDIS_ZSET"), REDIS_ZSET TSRMLS_CC);
     zend_declare_class_constant_long(ce, ZEND_STRL("REDIS_HASH"), REDIS_HASH TSRMLS_CC);
+    zend_declare_class_constant_long(ce, ZEND_STRL("REDIS_XSET"), REDIS_XSET TSRMLS_CC);
 
     /* Cluster doesn't support pipelining at this time */
     if(!is_cluster) {
@@ -3768,6 +3797,9 @@ redis_build_scan_cmd(char **cmd, REDIS_SCAN_TYPE type, char *key, int key_len,
         case TYPE_HSCAN:
             keyword = "HSCAN";
             break;
+        case TYPE_XSCAN:
+            keyword = "XSCAN";
+            break;
         case TYPE_ZSCAN:
         default:
             keyword = "ZSCAN";
@@ -3939,5 +3971,187 @@ PHP_METHOD(Redis, pfcount) {
 PHP_METHOD(Redis, pfmerge) {
     REDIS_PROCESS_CMD(pfmerge, redis_boolean_response);
 }
+
+/*
+ * finite sorted set commands
+ */
+
+static void generic_xadd_cmd(INTERNAL_FUNCTION_PARAMETERS, char *kw, xadd_cb fun) {
+    char *cmd;
+    int cmd_len;
+    RedisSock *redis_sock;
+    int elements=0;
+
+    if (redis_sock_get(getThis(), &redis_sock TSRMLS_CC, 0)<0) {
+        RETURN_FALSE;
+    }
+
+    if (fun(INTERNAL_FUNCTION_PARAM_PASSTHRU, redis_sock, kw,
+            &cmd, &cmd_len, &elements, NULL, NULL)==FAILURE) {
+        RETURN_FALSE;
+    }
+
+    REDIS_PROCESS_REQUEST(redis_sock, cmd, cmd_len);
+    if (elements) {
+        IF_ATOMIC() {
+            redis_mbulk_reply_zipped_keys_dbl(INTERNAL_FUNCTION_PARAM_PASSTHRU, redis_sock, NULL, NULL);
+        }
+        REDIS_PROCESS_RESPONSE(redis_mbulk_reply_zipped_keys_dbl);
+    } else {
+        IF_ATOMIC() {
+            redis_long_response(INTERNAL_FUNCTION_PARAM_PASSTHRU, redis_sock, NULL, NULL);
+        }
+        REDIS_PROCESS_RESPONSE(redis_long_response);
+    }
+}
+
+/* {{{ proto mix Redis::xAdd(string key, int score, string value) */
+PHP_METHOD(Redis, xAdd) {
+    generic_xadd_cmd(INTERNAL_FUNCTION_PARAM_PASSTHRU, "XADD",
+        redis_xadd_cmd);
+}
+/* }}} */
+
+/* {{{ proto double Redis::xIncrBy(string key, double value, mixed member) */
+PHP_METHOD(Redis, xIncrBy) {
+    generic_xadd_cmd(INTERNAL_FUNCTION_PARAM_PASSTHRU, "XINCRBY",
+        redis_xadd_cmd);
+}
+/* }}} */
+
+/* {{{ proto array Redis::xRange(string key,int start,int end,bool scores=0) */
+PHP_METHOD(Redis, xRange) {
+    generic_zrange_cmd(INTERNAL_FUNCTION_PARAM_PASSTHRU, "XRANGE",
+        redis_zrange_cmd);
+}
+/* }}} */
+
+/* {{{ proto array Redis::xRevRange(string k, long s, long e, bool scores=0) */
+PHP_METHOD(Redis, xRevRange) {
+    generic_zrange_cmd(INTERNAL_FUNCTION_PARAM_PASSTHRU, "XREVRANGE",
+        redis_zrange_cmd);
+}
+/* }}} */
+
+/* {{{ proto double Redis::xScore(string key, mixed member) */
+PHP_METHOD(Redis, xScore) {
+    REDIS_PROCESS_KW_CMD("XSCORE", redis_kv_cmd,
+        redis_bulk_double_response);
+}
+/* }}} */
+
+/* {{{ proto long Redis::xDelete(string key, string member) */
+PHP_METHOD(Redis, xDelete) {
+    REDIS_PROCESS_KW_CMD("XREM", redis_key_varval_cmd, redis_long_response);
+}
+/* }}} */
+
+/* {{{ proto long Redis::xCard(string key) */
+PHP_METHOD(Redis, xCard) {
+    REDIS_PROCESS_KW_CMD("XCARD", redis_key_cmd, redis_long_response);
+}
+/* }}} */
+
+/* {{{ proto double Redis::xSetOptions(string key, double value, mixed member) */
+PHP_METHOD(Redis, xSetOptions) {
+    generic_xadd_cmd(INTERNAL_FUNCTION_PARAM_PASSTHRU, "XSETOPTIONS",
+        redis_xadd_cmd);
+}
+/* }}} */
+
+/* {{{ proto long Redis::xGetFinity(string key) */
+PHP_METHOD(Redis, xGetFinity) {
+    REDIS_PROCESS_KW_CMD("XGETFINITY", redis_key_cmd, redis_long_response);
+}
+/* }}} */
+
+/* {{{ proto string Redis::xGetPruning(string key) */
+PHP_METHOD(Redis, xGetPruning) {
+    REDIS_PROCESS_KW_CMD("XGETPRUNING", redis_key_cmd, redis_string_response);
+}
+/* }}} */
+
+/* {{{ proto array
+ *     Redis::xRangeByScore(string k, long s, long e, array opts) */
+PHP_METHOD(Redis, xRangeByScore) {
+    generic_zrange_cmd(INTERNAL_FUNCTION_PARAM_PASSTHRU, "XRANGEBYSCORE",
+        redis_zrangebyscore_cmd);
+}
+/* }}} */
+
+/* {{{ proto array
+ *     Redis::xRevRangeByScore(string k, long s, long e, array opts) */
+PHP_METHOD(Redis, xRevRangeByScore) {
+    generic_zrange_cmd(INTERNAL_FUNCTION_PARAM_PASSTHRU, "XREVRANGEBYSCORE",
+        redis_zrangebyscore_cmd);
+}
+/* }}} */
+
+/* {{{ proto array Redis::xRangeByLex(string key, string min, string max, 
+ *                                           [offset, count]) */
+PHP_METHOD(Redis, xRangeByLex) {
+    REDIS_PROCESS_KW_CMD("XRANGEBYLEX", redis_zrangebylex_cmd, 
+        redis_sock_read_multibulk_reply);
+}
+/* }}} */
+
+/* {{{ proto array Redis::xRevRangeByLex(string key, string min,
+ *                                              string min, [long off, long limit) */
+PHP_METHOD(Redis, xRevRangeByLex) {
+    REDIS_PROCESS_KW_CMD("XREVRANGEBYLEX", redis_zrangebylex_cmd,
+        redis_sock_read_multibulk_reply);
+}
+/* }}} */
+
+/* {{{ proto long Redis::xRank(string key, mixed member) */
+PHP_METHOD(Redis, xRank) {
+    REDIS_PROCESS_KW_CMD("XRANK", redis_kv_cmd, redis_long_response);
+}
+/* }}} */
+
+/* {{{ proto long Redis::xRevRank(string key, mixed member) */
+PHP_METHOD(Redis, xRevRank) {
+    REDIS_PROCESS_KW_CMD("XREVRANK", redis_kv_cmd, redis_long_response);
+}
+/* }}} */
+
+/* {{{ proto long Redis::xCount(string key, string s, string e) */
+PHP_METHOD(Redis, xCount) {
+    REDIS_PROCESS_KW_CMD("XCOUNT", redis_key_str_str_cmd, redis_long_response);
+}
+/* }}} */
+
+/* {{{ proto long Redis::xLexCount(string key, string min, string max) */
+PHP_METHOD(Redis, xLexCount) {
+    REDIS_PROCESS_KW_CMD("XLEXCOUNT", redis_gen_zlex_cmd, redis_long_response);
+}
+/* }}} */
+
+/* {{{ proto long Redis::xRemRangeByScore(string k, string s, string e) */
+PHP_METHOD(Redis, xRemRangeByScore) {
+    REDIS_PROCESS_KW_CMD("XREMRANGEBYSCORE", redis_key_str_str_cmd,
+        redis_long_response);
+}
+/* }}} */
+
+/* {{{ proto long Redis::xRemRangeByRank(string k, long s, long e) */
+PHP_METHOD(Redis, xRemRangeByRank) {
+    REDIS_PROCESS_KW_CMD("XREMRANGEBYRANK", redis_key_long_long_cmd,
+        redis_long_response);
+}
+/* }}} */
+
+/* {{{ proto long Redis::xRemRangeByLex(string key, string min, string max) */
+PHP_METHOD(Redis, xRemRangeByLex) {
+    REDIS_PROCESS_KW_CMD("XREMRANGEBYLEX", redis_gen_zlex_cmd, 
+        redis_long_response);
+}
+/* }}} */
+
+/* {{{ proto array Redis::xScan(string key, long it [string pat, long cnt]) */
+PHP_METHOD(Redis, xScan) {
+    generic_scan_cmd(INTERNAL_FUNCTION_PARAM_PASSTHRU, TYPE_XSCAN);
+}
+/* }}} */
 
 /* vim: set tabstop=4 softtabstops=4 noexpandtab shiftwidth=4: */

@@ -224,6 +224,13 @@ int redis_command_cmd(INTERNAL_FUNCTION_PARAMETERS, RedisSock *redis_sock,
 int redis_fmt_scan_cmd(char **cmd, REDIS_SCAN_TYPE type, char *key, int key_len,
                        long it, char *pat, int pat_len, long count);
 
+/* finite sorted sets */
+typedef int (*xadd_cb)(INTERNAL_FUNCTION_PARAMETERS, RedisSock *redis_sock, char *,
+                       char**,int*,int*,short*,void**);
+
+int redis_xadd_cmd(INTERNAL_FUNCTION_PARAMETERS, RedisSock *redis_sock, char *kw,
+    char **cmd, int *cmd_len, int *ele, short *slot, void **ctx);
+
 /* Commands that don't communicate with Redis at all (such as getOption, 
  * setOption, _prefix, _serialize, etc).  These can be handled in one place
  * with the method of grabbing our RedisSock* object in different ways 
